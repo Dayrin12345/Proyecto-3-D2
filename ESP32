@@ -1,0 +1,184 @@
+// Universidad del Valle
+// Digital 2
+// Ana Gramajo y Dayrin Rivas
+// Proyecto 3: Mide la temperatura y envía los datos al núcleo STM32F446RE
+// Indica proceso con un neopixel
+
+//Librerias
+#include <Arduino.h>
+#include <Wire.h>
+#include <SPI.h>
+#include <Adafruit_BMP280.h>
+#include <Adafruit_NeoPixel.h>
+#include <HardwareSerial.h>
+
+#define LED_PIN 14 //Establecer un objeto de la librería NeoPixel
+#define LED_COUNT 16 //Numero de leds
+
+float temperatura;
+
+Adafruit_BMP280 bmp; // use I2C interface
+Adafruit_Sensor *bmp_temp = bmp.getTemperatureSensor();
+Adafruit_Sensor *bmp_pressure = bmp.getPressureSensor();
+
+Adafruit_NeoPixel pixels(LED_COUNT, LED_PIN, NEO_GRB + NEO_KHZ800);
+  // NEO_KHZ800 800 KHz bitstream (most NeoPixel products w/WS2812 LEDs)
+  // NEO_KHZ400 400 KHz (classic 'v1' (not v2) FLORA pixels, WS2811 drivers
+  // NEO_GRB Pixels are wired for GRB bitstream (most NeoPixel products)
+  // NEO_RGB Pixels are wired for RGB bitstream (v1 FLORA pixels, not v2)
+  // NEO_RGBW Pixels are wired for RGBW bitstream (NeoPixel RGBW products)
+
+// Configurar el puerto UART en ESP32
+HardwareSerial UART_ESP32(2);  // UART2
+
+// Definición del tipo de dato enum para representar los estados
+enum Estado {
+  ENCENDIDO,  // 0
+  MIDE,       // 1
+  ENVIADO,   // 2
+  GUARDADO
+};
+
+// Variable para almacenar el estado actual
+Estado estado = ENCENDIDO;  // Inicialmente en ENCENDIDO
+
+//Defición de función para mostrar estado y cambiarlo
+void mostrarEstado(Estado estado);
+void cambiarEstado(Estado nuevoEstado);
+
+void setup() {
+  Serial.begin(115200);
+
+  //Inicialización sensor
+  while ( !Serial ) delay(100);   // wait for native usb
+  Serial.println(F("BMP280 Sensor event test"));
+
+  unsigned status;
+  status = bmp.begin(0x76, 0x60);
+  //status = bmp.begin();
+  if (!status) {
+    Serial.println(F("Could not find a valid BMP280 sensor, check wiring or "
+                      "try a different address!"));
+    Serial.print("SensorID was: 0x"); Serial.println(bmp.sensorID(),16);
+    Serial.print("        ID of 0xFF probably means a bad address, a BMP 180 or BMP 085\n");
+    Serial.print("   ID of 0x56-0x58 represents a BMP 280,\n");
+    Serial.print("        ID of 0x60 represents a BME 280.\n");
+    Serial.print("        ID of 0x61 represents a BME 680.\n");
+    while (1) delay(10);
+  }
+
+  /* Default settings from datasheet. */
+  bmp.setSampling(Adafruit_BMP280::MODE_NORMAL,     /* Operating Mode. */
+                  Adafruit_BMP280::SAMPLING_X2,     /* Temp. oversampling */
+                  Adafruit_BMP280::SAMPLING_X16,    /* Pressure oversampling */
+                  Adafruit_BMP280::FILTER_X16,      /* Filtering. */
+                  Adafruit_BMP280::STANDBY_MS_500); /* Standby time. */
+
+  bmp_temp->printSensorDetails();
+
+  //Inicialización del Neopixel
+  pixels.begin(); 
+
+  //Configuración pixeles
+  UART_ESP32.begin(115200, SERIAL_8N1, 16, 17); 
+  Serial.println("Configuración UART completa. Enviando datos al STM32...");
+
+  // Inicializa el estado a ENCENDIDO para Neopixel
+  mostrarEstado(estado);  // Muestra el primer estado
+}
+
+void loop() {
+  // Comprobar si hay datos disponibles en UART2 (STM32)
+  if (UART_ESP32.available() > 0) {
+    // Leer el comando del STM32
+    char comando = UART_ESP32.read();
+
+    // Verificar si el comando es el que se espera para enviar la temperatura
+    if (comando == 'R') { 
+      // Lectura del sensor de temperatura
+      sensors_event_t temp_event;
+      bmp_temp->getEvent(&temp_event);
+      
+      Serial.print("Temperature = ");
+      Serial.print(temp_event.temperature);
+      Serial.println(" °C");
+
+      temperatura = temp_event.temperature;
+      cambiarEstado(MIDE);
+
+      // Enviar el dato de temperatura a través de UART2
+      UART_ESP32.write((uint8_t*)&temperatura, sizeof(temperatura));
+      delay(1000);
+
+      // Mostrar el dato enviado en la consola
+      Serial.print("Dato enviado: ");
+      Serial.println(temperatura);
+      cambiarEstado(ENVIADO);
+
+      delay(1000); // Esperar 1 segundo antes de leer el siguiente comando
+    }
+
+    if (comando == 'G') { 
+      cambiarEstado(GUARDADO);
+    }
+  }
+
+  else {
+    cambiarEstado(ENCENDIDO);
+  }
+}
+
+// Función para manejar el cambio de estado
+void mostrarEstado(Estado estado) {
+  switch (estado) {
+    case ENCENDIDO:
+      // Configura el LED para el estado ENCENDIDO
+      pixels.clear();
+      pixels.setPixelColor(0, pixels.Color(229, 10, 155));
+      pixels.show();
+      Serial.println("Estado: ENCENDIDO");
+      delay(1000);
+      break;
+
+    case MIDE:
+      // Configura el LED para el estado MIDE
+      pixels.clear();
+      pixels.setPixelColor(0, pixels.Color(40, 229, 175));
+      pixels.show();
+      Serial.println("Estado: MIDE");
+      delay(1000);
+      break;
+
+    case ENVIADO:
+      // Configura el LED para el estado ENVIADO
+      pixels.clear();
+      pixels.setPixelColor(0, pixels.Color(29, 60, 85));
+      pixels.show();
+      Serial.println("Estado: ENVIADO");
+      delay(1000);
+      break;
+    
+    case GUARDADO:
+      // Configura el LED para el estado GUARDADO
+      pixels.clear();
+      pixels.setPixelColor(0, pixels.Color(229, 215, 40));
+      pixels.show();
+      Serial.println("Estado: GUARDADO");
+      delay(1000);
+      break;
+    
+    default:
+      // Si el estado no es reconocido, apaga el LED
+      pixels.clear();
+      pixels.setPixelColor(0, pixels.Color(0, 0, 0));
+      pixels.show();
+      Serial.println("Estado desconocido");
+      delay(1000);
+      break;
+  }
+}
+
+void cambiarEstado(Estado nuevoEstado) {
+  estado = nuevoEstado;  // Cambia el valor de la variable estado
+  mostrarEstado(estado);  // Llama a la función que muestra el estado en el LED y en el monitor serial
+}
