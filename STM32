@@ -4,6 +4,8 @@
 /* USER CODE BEGIN Includes */
 #include <string.h>
 #include <stdio.h>
+#include "ili9341.h" // Librería para manejar la pantalla TFT ILI9341
+#include "fatfs_sd.h" // Librería para guardar datos en la tarjeta SD
 
 /* USER CODE END Includes */
 
@@ -14,6 +16,15 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
+
+// Variables para guardar datos en la tarjeta SD
+SPI_HandleTypeDef hspi1;
+FATFS fs;
+FATFS *pfs;
+FIL fil;
+FRESULT fres;
+DWORD fre_clust;
+uint32_t totalSpace, freeSpace;
 
 /* USER CODE END PD */
 
@@ -29,16 +40,27 @@ UART_HandleTypeDef huart5;
 UART_HandleTypeDef huart2;
 
 /* USER CODE BEGIN PV */
-uint8_t b1_pressed = 0;
-uint8_t b2_pressed = 0;
+
+uint8_t b1_pressed = 0; // Variable para verificar que el botón 1 ha sido presionado
+uint8_t b2_pressed = 0; // Variable para verificar que el botón 2 ha sido presionado
+
 uint8_t msg1[20] = "Temperatura: ";
 uint8_t msg2[5] = "C\n";
-uint8_t msg3[20] = "Guardadndo...\n";
+uint8_t msg3[20] = "Guardando...\n";
+uint8_t grados[] = "°C \n";
+uint8_t buffer2[10]; // guarda la temperatura como string
+
 float numero;
 char buffer[20];
 char comando1 = 'R';  // El comando que indica al ESP32 que mida la temperatura
-char comando2 = 'G';  // El comando que indica al ESP32 que mida la temperatura
+char comando2 = 'G';  // El comando que indica al ESP32 que se están guardando los datos
 float temperatura;
+
+// Dibujos a mostrar en la pantalla
+extern uint8_t snowman[]; 
+extern uint8_t frio2[];
+extern uint8_t derretido[];
+extern uint8_t calor4[];
 
 /* USER CODE END PV */
 
@@ -49,8 +71,8 @@ static void MX_SPI1_Init(void);
 static void MX_UART5_Init(void);
 static void MX_USART2_UART_Init(void);
 /* USER CODE BEGIN PFP */
-void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart);
-void mostrarValor();
+void tarjetaSD(float num); // Guarda el valor en la tarjeta SD
+void transmit_uart(char *string); // Muestra un mensaje mediante el UART 2
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -92,7 +114,8 @@ int main(void)
   MX_UART5_Init();
   MX_USART2_UART_Init();
   /* USER CODE BEGIN 2 */
-
+LCD_Init(); // Inicia la pantalla
+LCD_Clear(0xFFFF); // La limpia colocándolo en blanco
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -104,6 +127,7 @@ int main(void)
     /* USER CODE BEGIN 3 */
 	  
 	  if (b1_pressed == 1) {
+			b1_pressed = 0;  // Reinicia la variable
 		        // Enviar el comando 'R' al ESP32 para solicitar la temperatura
 		        HAL_UART_Transmit(&huart5, (uint8_t*)&comando1, sizeof(comando1), HAL_MAX_DELAY);
 
@@ -118,13 +142,37 @@ int main(void)
 		        HAL_UART_Transmit(&huart2, (uint8_t*)buffer, strlen(buffer), HAL_MAX_DELAY);
 		        HAL_UART_Transmit(&huart2, msg2, sizeof(msg2) - 1, HAL_MAX_DELAY);
 
-		        b1_pressed = 0;  // Reinicia la variable una vez procesado
 		        HAL_Delay(1000); // Retardo para evitar múltiples envíos rápidos
+
+|			if (temperatura < 20.00) { 
+				// Pantalla ILI9341
+				LCD_Print(buffer, 75, 210, 2, 0x0000, 0xFFFF); // Muestra la temperatura
+				LCD_Bitmap(180, 80, 80, 80, snowman); // Muestra un muñeco de nieve
+				for (int x = 0; x < 20; x++) { // Muestra un termómetro llegando a temperaturas bajas
+					HAL_Delay(15);
+					int anim = (x/10)%2;
+					LCD_Sprite(60, 10, 119, 200, frio2, 2, anim, 0, 1);
+				}
+			}
+			if (temperatura >= 20.00) {
+				// Pantalla ILI9341
+				LCD_Print(buffer2, 75, 210, 2, 0x0000, 0xFFFF); // Muestra la temperatura
+				LCD_Bitmap(180, 94, 80, 80, derretido); // Muestra un muñeco de nieve derretido
+				for (int x = 0; x < 20; x++) { // Muestra un termómetro llegando a temperaturas altas
+					HAL_Delay(15);
+					int anim2 = (x/5)%4;
+					LCD_Sprite(60, 10, 119, 200, calor4, 4, anim2, 0, 1);
+				}
+			}
+			LCD_Clear(0xFFFF);
 		      }
 	  if (b2_pressed == 1) {
-		  	   HAL_UART_Transmit(&huart5, (uint8_t*)&comando2, sizeof(comando2), HAL_MAX_DELAY);
-		  	   HAL_UART_Transmit(&huart2, msg3, sizeof(msg3) - 1, HAL_MAX_DELAY);
-		  	   b2_pressed = 0;
+			b2_pressed = 0; // Reinicia la variable
+			HAL_UART_Transmit(&huart5, (uint8_t*)&comando2, sizeof(comando2), HAL_MAX_DELAY);
+		  	HAL_UART_Transmit(&huart2, msg3, sizeof(msg3) - 1, HAL_MAX_DELAY);
+			tarjetaSD(temperatura); // Manda la temperatura a una función para que se guarde en la tarjeta
+			HAL_Delay(1000); // Retardo para evitar múltiples envíos rápidos
+		  	   
 	  }
   }
 
@@ -367,32 +415,69 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
         b2_pressed = 1;
     }
 }
-/*
-// Implementación del callback de UART
-void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
-  if (huart->Instance == UART5) {
-    buffer[buffer_index++] = received_data;  // Almacena el dato recibido en el buffer
 
-    // Verifica si se ha recibido un salto de línea (fin del mensaje)
-    if (received_data == '\n' || buffer_index >= 100) {
-      buffer[buffer_index] = '\0';  // Termina la cadena
-      buffer_index = 0;  // Reinicia el índice del buffer
+void tarjetaSD (float num) { // Guarda la temperatura en la tarjeta SD
 
-      // Procesa el mensaje recibido (puedes enviar el buffer a través de la terminal o hacer otra acción)
-      HAL_UART_Transmit(&huart5, buffer, strlen((char*)buffer), HAL_MAX_DELAY);
-    }
+	// Montar SD
+	fres = f_mount(&fs, "/", 0);
+	if (fres==FR_OK) {
+		transmit_uart("\nLa tarjeta micro SD se ha montado correctamente. \n");
+	} else if (fres != FR_OK) {
+		  transmit_uart("Hubo un error al montar la tarjeta micro SD. \n");
+	}
+	HAL_Delay(500);
 
-    // Vuelve a iniciar la recepción en modo interrupción
-    HAL_UART_Receive_IT(&huart5, &received_data, 1);
-  }
+	//Abrir archivo
+	fres = f_open(&fil, "proyecto3.txt", FA_OPEN_APPEND | FA_WRITE | FA_READ);
+	if (fres==FR_OK) {
+		transmit_uart("El documento se ha abierto para leer y verificar que haya espacio disponible. \n");
+	} else if (fres != FR_OK) {
+		  transmit_uart("No fue posible abrir el documento. \n");
+	}
+
+	HAL_Delay(500);
+
+	// Convertir el float a una cadena
+	sprintf(buffer2, "%.2f", num);
+
+	// Escribir el número en el archivo
+	fres = f_write(&fil, msg1, strlen(msg1), &bw);
+	fres = f_write(&fil, buffer2, strlen(buffer2), &bw);
+	fres = f_write(&fil, grados, strlen(grados), &bw);
+
+	if (fres == FR_OK)
+	{
+		HAL_UART_Transmit(&huart2, (uint8_t*)msg1, sizeof(msg1), HAL_MAX_DELAY);
+		HAL_UART_Transmit(&huart2, (uint8_t*)buffer2, sizeof(buffer2), HAL_MAX_DELAY);
+		HAL_UART_Transmit(&huart2, (uint8_t*)msg2, sizeof(msg2), HAL_MAX_DELAY);
+	} else {
+		transmit_uart("Error al escibir el valor. \n");
+	}
+	HAL_Delay(500);
+
+	// Cerrar archivo
+	fres = f_close(&fil);
+	if (fres==FR_OK) {
+		  transmit_uart("El archivo se ha cerrado.\n");
+	} else if (fres != FR_OK) {
+		  transmit_uart("No se pudo cerrar el archivo. \n");
+	}
+	HAL_Delay(500);
+
+	// Desmontar unidad
+	f_mount(NULL, "", 1);
+	if (fres==FR_OK) {
+		  transmit_uart("Se ha desmontado la tarjeta micro SD. \n");
+	} else if (fres != FR_OK) {
+		  transmit_uart("No se ha podido desmontar la tarjeta micro SD. \n");
+	}
+	HAL_Delay(500);
 }
 
-void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
-  if (huart->Instance == UART5) { // Asegurarse de que es la UART correcta
-    datoRecibido = 1; // Indicar que se recibió un dato completo
-  }
+void transmit_uart(char *string) { // Muestra una cadena mediante el UART2
+	HAL_UART_Transmit(&huart2, (uint8_t*)string, strlen(string), HAL_MAX_DELAY);
 }
-*/
+
 /* USER CODE END 4 */
 
 /**
