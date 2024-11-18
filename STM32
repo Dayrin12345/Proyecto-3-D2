@@ -102,12 +102,7 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-	  // Leer datos desde UART5
-	  //HAL_UART_Receive(&huart5, (uint8_t*)rxBuffer, sizeof(numero1), 1000);
-	  //HAL_UART_Receive(&huart5, (uint8_t*)buffer, sizeof(buffer), HAL_MAX_DELAY); // Recibir la cadena
-	 // HAL_UART_Receive(&huart5, (uint8_t*)&numero, sizeof(float), HAL_MAX_DELAY);
-
-
+	  
 	  if (b1_pressed == 1) {
 		        // Enviar el comando 'R' al ESP32 para solicitar la temperatura
 		        HAL_UART_Transmit(&huart5, (uint8_t*)&comando1, sizeof(comando1), HAL_MAX_DELAY);
