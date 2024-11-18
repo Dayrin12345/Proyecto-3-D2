@@ -1,3 +1,9 @@
+// Universidad del Valle
+// Digital 2
+// Ana Gramajo y Dayrin Rivas
+// Proyecto 3: STM32F446RE pide los datos de temperatura del ESP32. Muestra su valor en la computadora, en la pantalla TFT y lo almacena en una tarjeta micro SD. 
+// Indica proceso con un neopixel
+
 #include "main.h"
 
 /* Private includes ----------------------------------------------------------*/
