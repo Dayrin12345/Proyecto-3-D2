@@ -6,6 +6,7 @@
 
 //Librerias
 #include <Arduino.h>
+#include "BluetoothSerial.h"
 #include <Wire.h>
 #include <SPI.h>
 #include <Adafruit_BMP280.h>
@@ -36,11 +37,19 @@ enum Estado {
   ENCENDIDO,  // 0
   MIDE,       // 1
   ENVIADO,   // 2
-  GUARDADO
+  GUARDADO,
+  BLUETOOTH
 };
 
 // Variable para almacenar el estado actual
 Estado estado = ENCENDIDO;  // Inicialmente en ENCENDIDO
+
+// Verifica que el bluetooth está disponible
+#if !defined(CONFIG_BT_ENABLED) || !defined(CONFIG_BLUEDROID_ENABLED)
+#error Bluetooth is not enabled! Please run `make menuconfig` to and enable it
+#endif
+
+BluetoothSerial SerialBT;
 
 //Defición de función para mostrar estado y cambiarlo
 void mostrarEstado(Estado estado);
@@ -48,6 +57,9 @@ void cambiarEstado(Estado nuevoEstado);
 
 void setup() {
   Serial.begin(115200);
+
+  // Nombra el dispositivo e inicia el Bluetooth
+  SerialBT.begin("Proyecto3");
 
   //Inicialización sensor
   while ( !Serial ) delay(100);   // wait for native usb
@@ -115,6 +127,12 @@ void loop() {
       Serial.println(temperatura);
       cambiarEstado(ENVIADO);
 
+      // Enviar el dato por medio de Bluetooth
+      SerialBT.print("Temperatura: ");
+      SerialBT.println(temperatura);
+      Serial.println(" °C");
+      cambiarEstado(BLUETOOTH);
+
       delay(1000); // Esperar 1 segundo antes de leer el siguiente comando
     }
 
@@ -166,7 +184,16 @@ void mostrarEstado(Estado estado) {
       Serial.println("Estado: GUARDADO");
       delay(1000);
       break;
-    
+
+    case BLUETOOTH:
+      // Configura el LED para el estado BLUETOOTH
+      pixels.clear();
+      pixels.setPixelColor(0, pixels.Color(153, 204, 255));
+      pixels.show();
+      Serial.println("Estado: BLUETOOTH");
+      delay(1000);
+      break;
+
     default:
       // Si el estado no es reconocido, apaga el LED
       pixels.clear();
